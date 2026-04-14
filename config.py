@@ -83,8 +83,7 @@ PPOMPPU_BOARDS = [
 
 # 펨코 크롤링할 게시판 목록
 FMKOREA_BOARDS = [
-    "phone",          # 스마트폰
-    "hotdeal",        # 핫딜
+    "stock",          # 알뜰폰/핫딜
 ]
 
 # 디시인사이드 갤러리 목록
