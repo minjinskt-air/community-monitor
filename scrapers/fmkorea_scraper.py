@@ -18,6 +18,7 @@ BASE_URL = "https://www.fmkorea.com"
 BOARD_URLS = {
     "phone":   "/phone",
     "hotdeal": "/hotdeal",
+    "stock":   "/stock",
 }
 
 
