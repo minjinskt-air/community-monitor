@@ -2,7 +2,7 @@
 scrapers/dcinside_scraper.py
 ──────────────────────────────────────
 디시인사이드 갤러리 크롤러
-대상: gall.dcinside.com (알뜰폰 갤러리 id=mvno)
+대상: gall.dcinside.com (알뜰폰 갤러리 id=mvno, 미니갤)
 ──────────────────────────────────────
 """
 
@@ -38,12 +38,9 @@ class DcinsideScraper:
         all_posts = []
         seen_ids  = set()
 
-        for gallery_id in DCINSIDE_GALLERIES:
-            print(f"  [디시] {gallery_id} 갤러리 수집 중...")
-
-            # 일반갤/미니갤 자동 감지
-            base_url = self._detect_gallery_url(gallery_id)
-            print(f"  [디시] URL: {base_url}")
+        for gallery_id, is_mini in DCINSIDE_GALLERIES:
+            base_url = MINI_URL if is_mini else GALL_URL
+            print(f"  [디시] {gallery_id} {'미니갤' if is_mini else '일반갤'} 수집 중... URL: {base_url}")
 
             page = 1
             consecutive_old = 0
@@ -67,35 +64,6 @@ class DcinsideScraper:
         print(f"  [디시] 총 {len(all_posts)}개 수집")
         return all_posts
 
-    def _detect_gallery_url(self, gallery_id: str) -> str:
-        """일반갤 먼저 시도, 글 목록이 없으면 미니갤로 전환"""
-        # 일반갤 시도
-        url  = f"{GALL_URL}?id={gallery_id}&page=1"
-        try:
-            resp = self.session.get(url, timeout=15)
-            soup = BeautifulSoup(resp.content, "html.parser")
-            rows = soup.select("tr.ub-content")
-            soup.decompose()
-            if rows:
-                return GALL_URL
-        except Exception:
-            pass
-
-        # 미니갤 시도
-        url  = f"{MINI_URL}?id={gallery_id}&page=1"
-        try:
-            resp = self.session.get(url, timeout=15)
-            soup = BeautifulSoup(resp.content, "html.parser")
-            rows = soup.select("tr.ub-content")
-            soup.decompose()
-            if rows:
-                return MINI_URL
-        except Exception:
-            pass
-
-        # 기본값: 일반갤
-        return GALL_URL
-
     def _scrape_page(self, base_url: str, gallery_id: str, page: int, cutoff: datetime, seen_ids: set):
         url  = f"{base_url}?id={gallery_id}&page={page}"
         resp = self.session.get(url, timeout=30)
@@ -118,13 +86,12 @@ class DcinsideScraper:
                     if num_text in ("공지", "AD", "설문", ""):
                         continue
 
-                # 제목 & 링크 (em.icon_txt 등 아이콘 텍스트 제외)
+                # 제목 & 링크
                 title_elem = row.select_one("td.gall_tit a")
                 if not title_elem:
                     continue
 
-                href  = title_elem.get("href", "")
-                # em 태그(아이콘) 제거 후 텍스트 추출
+                href = title_elem.get("href", "")
                 for em in title_elem.find_all("em"):
                     em.decompose()
                 title = title_elem.get_text(strip=True)
@@ -136,7 +103,7 @@ class DcinsideScraper:
                 if not post_id or post_id in seen_ids:
                     continue
 
-                # 날짜 (title 속성에 전체 날짜 있음)
+                # 날짜
                 date_elem = row.select_one("td.gall_date")
                 if date_elem:
                     date_str = date_elem.get("title") or date_elem.get_text(strip=True)
