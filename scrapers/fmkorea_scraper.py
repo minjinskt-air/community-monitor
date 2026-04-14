@@ -15,10 +15,9 @@ from config import FMKOREA_BOARDS, SCRAPE_DAYS
 
 BASE_URL = "https://www.fmkorea.com"
 
-# 게시판 ID → URL 경로 매핑
 BOARD_URLS = {
-    "phone":   "/phone",     # 스마트폰
-    "hotdeal": "/hotdeal",   # 핫딜
+    "phone":   "/phone",
+    "hotdeal": "/hotdeal",
 }
 
 
@@ -31,8 +30,10 @@ class FmkoreaScraper:
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9",
             "Referer": "https://www.fmkorea.com",
         })
 
@@ -66,10 +67,6 @@ class FmkoreaScraper:
         print(f"  [펨코] 총 {len(all_posts)}개 수집")
         return all_posts
 
-    # ──────────────────────────────────────
-    # 내부 메서드
-    # ──────────────────────────────────────
-
     def _scrape_page(self, board_path: str, page: int, cutoff: datetime, seen_ids: set):
         url  = f"{BASE_URL}{board_path}?page={page}"
         resp = self.session.get(url, timeout=30)
@@ -77,48 +74,58 @@ class FmkoreaScraper:
         soup = BeautifulSoup(resp.content, "html.parser")
         resp.close()
 
-        posts   = []
+        posts        = []
         page_has_new = False
 
-        # FMKorea XE 게시판 구조: ul.board_list > li
-        items = soup.select("ul.board_list > li")
-        # hotdeal은 다른 클래스일 수 있으므로 fallback
-        if not items:
-            items = soup.select("li.li_hotdeal_var") or soup.select("div.fm_best_widget ul li")
+        # FMKorea XE 구조: ul.bd_lst > li 또는 ul.board_list > li
+        items = (
+            soup.select("ul.bd_lst > li") or
+            soup.select("ul.board_list > li") or
+            soup.select("ul.list_board > li") or
+            soup.select("div.bd_lst_wrp li")
+        )
+
+        print(f"  [펨코] {board_path} {page}p → 항목 {len(items)}개 발견")
 
         for item in items:
             try:
-                # 공지 제외
-                if "notice" in item.get("class", []):
+                # 공지·광고 제외
+                classes = item.get("class", [])
+                if any(c in classes for c in ["notice", "li_notice", "ad"]):
                     continue
 
-                # 링크 & 게시글 ID
-                a_tag = item.select_one("a[href]")
-                if not a_tag:
+                # 제목 & 링크
+                title_elem = (
+                    item.select_one("h3.title a") or
+                    item.select_one("span.title a") or
+                    item.select_one(".bd_lst_inner a") or
+                    item.select_one("a.hotdeal_var8") or
+                    item.select_one("a[href*='/']")
+                )
+                if not title_elem:
                     continue
-                href = a_tag.get("href", "")
+
+                href  = title_elem.get("href", "")
                 post_id = self._extract_id(href)
                 if not post_id or post_id in seen_ids:
                     continue
 
-                # 제목
-                title_elem = item.select_one(".title") or item.select_one("a.hotdeal_var8") or a_tag
-                title = title_elem.get_text(strip=True) if title_elem else ""
-                # 댓글 수 제거 [N]
+                # 제목 텍스트 (댓글수 [N] 제거)
+                title = title_elem.get_text(strip=True)
                 title = re.sub(r"\s*\[\d+\]\s*$", "", title).strip()
                 if not title:
                     continue
 
                 # 날짜
-                time_elem = item.select_one(".time, .date, time")
+                time_elem = item.select_one("span.time, span.date, time, .time")
                 posted_at = self._parse_date(time_elem.get_text(strip=True) if time_elem else "")
                 if posted_at < cutoff:
                     continue
                 page_has_new = True
 
                 # 조회수
-                views    = self._extract_num(item.select_one(".count, .view_count, .hit"))
-                comments = self._extract_num(item.select_one(".reply_num, .comment"))
+                views    = self._extract_num(item.select_one(".count, .hit, .view_count, span.read"))
+                comments = self._extract_num(item.select_one(".reply_num, .comment_num, .replyCount"))
 
                 full_url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
@@ -132,7 +139,8 @@ class FmkoreaScraper:
                     "posted_at": posted_at,
                 })
                 seen_ids.add(post_id)
-            except Exception:
+            except Exception as e:
+                print(f"  [펨코] 항목 파싱 에러: {e}")
                 continue
 
         soup.decompose()
@@ -140,7 +148,6 @@ class FmkoreaScraper:
         return posts, all_old
 
     def _extract_id(self, href: str) -> str:
-        # /board/12345678 또는 ?document_srl=12345678
         m = re.search(r"/(\d{6,})", href) or re.search(r"document_srl=(\d+)", href)
         return m.group(1) if m else ""
 
@@ -151,30 +158,19 @@ class FmkoreaScraper:
         return int(m.group(1).replace(",", "")) if m else 0
 
     def _parse_date(self, text: str) -> datetime:
-        """
-        펨코 날짜 형식:
-          - "2026.04.14 10:30"
-          - "2026-04-14"
-          - "04.14 10:30"  (올해)
-          - "10:30"        (오늘)
-        """
         s = text.strip()
         try:
-            # "HH:MM" or "HH:MM:SS" (오늘)
             if re.match(r"^\d{1,2}:\d{2}(:\d{2})?$", s):
                 parts = s.split(":")
                 return datetime.now().replace(
                     hour=int(parts[0]), minute=int(parts[1]), second=0, microsecond=0
                 )
-            # "YYYY.MM.DD HH:MM"
             m = re.match(r"(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})\s+(\d{1,2}):(\d{2})", s)
             if m:
                 return datetime(int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]))
-            # "YYYY.MM.DD"
             m = re.match(r"(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})", s)
             if m:
                 return datetime(int(m[1]), int(m[2]), int(m[3]))
-            # "MM.DD HH:MM" (올해)
             m = re.match(r"(\d{1,2})[.\-](\d{1,2})\s+(\d{1,2}):(\d{2})", s)
             if m:
                 return datetime(datetime.now().year, int(m[1]), int(m[2]), int(m[3]), int(m[4]))
