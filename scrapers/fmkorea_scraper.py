@@ -2,7 +2,7 @@
 scrapers/fmkorea_scraper.py
 ──────────────────────────────────────
 펨코(FMKorea) 크롤러
-대상: www.fmkorea.com
+대상: www.fmkorea.com (모바일 버전 사용 - 봇 차단 우회)
 ──────────────────────────────────────
 """
 
@@ -27,17 +27,27 @@ class FmkoreaScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
+            # 모바일 UA로 변경 (봇 차단 우회)
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
+                "Chrome/124.0.6367.82 Mobile Safari/537.36"
             ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ko-KR,ko;q=0.9",
-            "Referer": "https://www.fmkorea.com",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
         })
 
     def scrape(self) -> list:
+        # 첫 요청으로 쿠키 획득
+        try:
+            self.session.get(BASE_URL, timeout=15)
+            time.sleep(1)
+        except Exception:
+            pass
+
         cutoff    = datetime.now() - timedelta(days=SCRAPE_DAYS)
         all_posts = []
         seen_ids  = set()
@@ -59,7 +69,7 @@ class FmkoreaScraper:
                         consecutive_old = 0
                     all_posts.extend(posts)
                     page += 1
-                    time.sleep(0.5)
+                    time.sleep(1)
                 except Exception as e:
                     print(f"  [펨코] {board_id} {page}p 에러: {e}")
                     break
@@ -77,11 +87,12 @@ class FmkoreaScraper:
         posts        = []
         page_has_new = False
 
-        # FMKorea XE 구조: ul.bd_lst > li 또는 ul.board_list > li
+        # FMKorea 게시판 구조 (여러 셀렉터 시도)
         items = (
             soup.select("ul.bd_lst > li") or
             soup.select("ul.board_list > li") or
             soup.select("ul.list_board > li") or
+            soup.select("li.li_bd") or
             soup.select("div.bd_lst_wrp li")
         )
 
@@ -89,7 +100,6 @@ class FmkoreaScraper:
 
         for item in items:
             try:
-                # 공지·광고 제외
                 classes = item.get("class", [])
                 if any(c in classes for c in ["notice", "li_notice", "ad"]):
                     continue
@@ -100,32 +110,31 @@ class FmkoreaScraper:
                     item.select_one("span.title a") or
                     item.select_one(".bd_lst_inner a") or
                     item.select_one("a.hotdeal_var8") or
-                    item.select_one("a[href*='/']")
+                    item.select_one("a[href*='/board/']") or
+                    item.select_one("a[href*='/hotdeal/']")
                 )
                 if not title_elem:
                     continue
 
-                href  = title_elem.get("href", "")
+                href    = title_elem.get("href", "")
                 post_id = self._extract_id(href)
                 if not post_id or post_id in seen_ids:
                     continue
 
-                # 제목 텍스트 (댓글수 [N] 제거)
                 title = title_elem.get_text(strip=True)
                 title = re.sub(r"\s*\[\d+\]\s*$", "", title).strip()
                 if not title:
                     continue
 
                 # 날짜
-                time_elem = item.select_one("span.time, span.date, time, .time")
+                time_elem = item.select_one("span.time, span.date, time, .time, abbr")
                 posted_at = self._parse_date(time_elem.get_text(strip=True) if time_elem else "")
                 if posted_at < cutoff:
                     continue
                 page_has_new = True
 
-                # 조회수
-                views    = self._extract_num(item.select_one(".count, .hit, .view_count, span.read"))
-                comments = self._extract_num(item.select_one(".reply_num, .comment_num, .replyCount"))
+                views    = self._extract_num(item.select_one(".count, .hit, .view_count, span.read, .reads"))
+                comments = self._extract_num(item.select_one(".reply_num, .comment_num, .replyCount, .cmt"))
 
                 full_url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
