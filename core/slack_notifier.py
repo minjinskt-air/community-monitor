@@ -18,7 +18,7 @@ SOURCE_LABEL = {
 SOURCE_EMOJI = {
     "ppomppu":  "🛍",
     "fmkorea":  "🎮",
-    "dcinside": "📺",
+    "dcinside": "📱",
 }
 
 
@@ -48,11 +48,10 @@ def send_post(post: dict) -> bool:
     keywords = ", ".join(post.get("matched_keywords", []))
 
     text = (
-        f"{emoji} *[{label}]*  |  📅 {date_str}\n"
+        f"{emoji} *[{label}]*  |  {date_str}\n"
         f"*{post['title']}*\n"
-        f"👁 조회 {views:,}  |  💬 댓글 {comments}\n"
-        f"🔑 키워드: {keywords}\n"
-        f"🔗 {post['url']}"
+        f"조회 {views:,}  |  댓글 {comments}  |  키워드: {keywords}\n"
+        f"{post['url']}"
     )
 
     payload = {
