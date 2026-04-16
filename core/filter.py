@@ -21,6 +21,9 @@ def apply_filter(posts: list) -> list:
     반환: 필터 통과한 게시글 리스트 (정렬: 조회수 내림차순)
     """
     result = []
+    cnt_exclude = 0
+    cnt_no_keyword = 0
+    cnt_low_views = 0
 
     for post in posts:
         title = post.get("title", "")
@@ -28,15 +31,19 @@ def apply_filter(posts: list) -> list:
 
         # 1) 제외 키워드 체크
         if any(kw in title for kw in EXCLUDE_KEYWORDS):
+            cnt_exclude += 1
             continue
 
         # 2) 포함 키워드 체크
         matched = [kw for kw in KEYWORDS if kw.lower() in title.lower()]
         if not matched:
+            cnt_no_keyword += 1
             continue
 
         # 3) 조회수 체크
         if MIN_VIEWS > 0 and views < MIN_VIEWS:
+            cnt_low_views += 1
+            print(f"  [Filter] 조회수 미달({views:,} < {MIN_VIEWS:,}) → '{title[:40]}'")
             continue
 
         post["matched_keywords"] = matched
@@ -47,7 +54,7 @@ def apply_filter(posts: list) -> list:
 
     print(
         f"[Filter] {len(posts)}개 수집 → "
-        f"키워드+조회수 통과 {len(result)}개 "
-        f"(기준: 조회수 {MIN_VIEWS:,} 이상)"
+        f"제외키워드:{cnt_exclude} / 키워드없음:{cnt_no_keyword} / 조회수미달:{cnt_low_views} / "
+        f"통과:{len(result)}개 (기준: 조회수 {MIN_VIEWS:,} 이상)"
     )
     return result
