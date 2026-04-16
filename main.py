@@ -69,6 +69,9 @@ def run_monitor():
         # ── 3. 중복(기발송) 제거 ───────────────────
         new_posts = db.filter_new(filtered)
         log(f"신규 게시글: {len(new_posts)}개 (중복 제외 {len(filtered) - len(new_posts)}개)")
+        for p in filtered:
+            if p not in new_posts:
+                log(f"  [중복] 이미 발송됨 → '{p['title'][:40]}' (조회수 {p.get('views',0):,})")
 
         if not new_posts:
             log("발송할 신규 게시글 없음 → 종료")
