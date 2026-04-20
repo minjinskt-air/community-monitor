@@ -1,7 +1,7 @@
 """
 core/slack_notifier.py
 ──────────────────────────────────────
-슬랙 Incoming Webhook 발송
+슬랙 Incoming Webhook 발송 (Block Kit 카드 형식)
 ──────────────────────────────────────
 """
 
@@ -35,76 +35,118 @@ def _send_raw(payload: dict) -> bool:
         return False
 
 
-def send_post(post: dict) -> bool:
-    """게시글 1개 발송"""
-    source = post.get("source", "unknown")
-    label  = SOURCE_LABEL.get(source, source)
-    emoji  = SOURCE_EMOJI.get(source, "📌")
-
-    views  = post.get("views", 0)
-    posted = post.get("posted_at")
+def _build_post_blocks(post: dict) -> list:
+    """게시글 1개를 Block Kit 블록 리스트로 변환"""
+    source   = post.get("source", "unknown")
+    label    = SOURCE_LABEL.get(source, source)
+    emoji    = SOURCE_EMOJI.get(source, "📌")
+    views    = post.get("views", 0)
+    posted   = post.get("posted_at")
     date_str = posted.strftime("%m-%d %H:%M") if hasattr(posted, "strftime") else str(posted)
-    keywords = ", ".join(post.get("matched_keywords", []))
+    keywords = post.get("matched_keywords", [])
+    kw_tags  = "  ".join(f"`{kw}`" for kw in keywords)
+    title    = post.get("title", "")
+    url      = post.get("url", "")
 
-    text = (
-        f"{emoji} *[{label}]*  |  {date_str}\n"
-        f"*{post['title']}*\n"
-        f"조회 {views:,}  |  키워드: {keywords}\n"
-        f"{post['url']}"
-    )
+    return [
+        {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"{emoji}  *{label}*  ·  {date_str}"
+            }]
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*<{url}|{title}>*"
+            }
+        },
+        {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"조회 {views:,}   {kw_tags}"
+            }]
+        },
+        {"type": "divider"},
+    ]
 
-    payload = {
-        "channel": SLACK_CHANNEL,
-        "text":    text,
-        "unfurl_links": False,
-    }
-    return _send_raw(payload)
 
-
-def send_summary(posts: list, label: str = ""):
-    """일괄 발송 + 요약 헤더"""
+def send_summary(posts: list):
+    """전체 게시글을 카드 1장으로 묶어서 발송"""
     if not posts:
         return
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    header = {
-        "channel": SLACK_CHANNEL,
-        "text": (
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔔 *알뜰폰 커뮤니티 모니터링* {label}\n"
-            f"🕐 {now}  |  신규 {len(posts)}건\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        ),
+
+    blocks = [
+        # ── 헤더 ──────────────────────────────────
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"🔔  *알뜰폰 커뮤니티 모니터링*\n{now}"
+            },
+            "accessory": {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"신규 {len(posts)}건",
+                    "emoji": True
+                },
+                "style": "primary"
+            }
+        },
+        {"type": "divider"},
+    ]
+
+    # ── 게시글 블록 추가 (Slack 최대 50블록 고려하여 분할) ──
+    BLOCK_PER_POST = 4   # context + section + context + divider
+    MAX_POSTS = (50 - 2) // BLOCK_PER_POST  # 헤더 2블록 제외
+
+    for post in posts[:MAX_POSTS]:
+        blocks.extend(_build_post_blocks(post))
+
+    if len(posts) > MAX_POSTS:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"_외 {len(posts) - MAX_POSTS}건 추가 발견 (한도 초과로 생략)_"
+            }]
+        })
+
+    ok = _send_raw({
+        "channel":      SLACK_CHANNEL,
+        "blocks":       blocks,
         "unfurl_links": False,
-    }
-    _send_raw(header)
+    })
 
-    ok = 0
-    for post in posts:
-        if send_post(post):
-            ok += 1
-
-    print(f"[Slack] {ok}/{len(posts)}개 발송 완료")
+    print(f"[Slack] {'발송 완료' if ok else '발송 실패'} ({len(posts)}건)")
 
 
 def send_error(msg: str):
     """에러 알림"""
     _send_raw({
         "channel": SLACK_CHANNEL,
-        "text": f"❌ *[모니터링 에러]*\n{msg}",
+        "text":    f"❌ *[모니터링 에러]*\n{msg}",
     })
 
 
 def send_heartbeat(stats: dict):
     """정상 동작 확인용 주기 메시지 (선택)"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    by_source = "\n".join(
+    now      = datetime.now().strftime("%Y-%m-%d %H:%M")
+    by_src   = "\n".join(
         f"  • {SOURCE_LABEL.get(k, k)}: {v}건"
         for k, v in stats.get("by_source", {}).items()
     )
-    text = (
-        f"💚 *모니터링 정상 동작 중* | {now}\n"
-        f"누적 발송: {stats.get('total', 0)}건\n"
-        f"{by_source}"
-    )
-    _send_raw({"channel": SLACK_CHANNEL, "text": text, "unfurl_links": False})
+    _send_raw({
+        "channel": SLACK_CHANNEL,
+        "text": (
+            f"💚 *모니터링 정상 동작 중* | {now}\n"
+            f"누적 발송: {stats.get('total', 0)}건\n{by_src}"
+        ),
+        "unfurl_links": False,
+    })
