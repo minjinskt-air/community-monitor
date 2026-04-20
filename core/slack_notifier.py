@@ -41,16 +41,15 @@ def send_post(post: dict) -> bool:
     label  = SOURCE_LABEL.get(source, source)
     emoji  = SOURCE_EMOJI.get(source, "📌")
 
-    views    = post.get("views", 0)
-    comments = post.get("comments", 0)
-    posted   = post.get("posted_at")
+    views  = post.get("views", 0)
+    posted = post.get("posted_at")
     date_str = posted.strftime("%m-%d %H:%M") if hasattr(posted, "strftime") else str(posted)
     keywords = ", ".join(post.get("matched_keywords", []))
 
     text = (
         f"{emoji} *[{label}]*  |  {date_str}\n"
         f"*{post['title']}*\n"
-        f"조회 {views:,}  |  댓글 {comments}  |  키워드: {keywords}\n"
+        f"조회 {views:,}  |  키워드: {keywords}\n"
         f"{post['url']}"
     )
 
